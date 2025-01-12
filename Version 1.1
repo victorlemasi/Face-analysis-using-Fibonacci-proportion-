@@ -1,0 +1,271 @@
+import cv2
+import numpy as np
+from math import sqrt
+import mediapipe as mp
+
+class FacialFeatureAnalyzer:
+    def __init__(self):
+        # Initialize MediaPipe Face Mesh
+        self.mp_face_mesh = mp.solutions.face_mesh
+        self.face_mesh = self.mp_face_mesh.FaceMesh(
+            max_num_faces=1,
+            min_detection_confidence=0.5,
+            min_tracking_confidence=0.5
+        )
+        
+        # Golden ratio
+        self.golden_ratio = (1 + sqrt(5)) / 2
+        
+        # Define landmark indices for different facial features
+        self.landmarks = {
+            'face': {
+                'top': 10,
+                'bottom': 152,
+                'left': 234,
+                'right': 454
+            },
+            'eyes': {
+                'left': {
+                    'outer': 33,
+                    'inner': 133,
+                    'top': 159,
+                    'bottom': 145
+                },
+                'right': {
+                    'outer': 263,
+                    'inner': 362,
+                    'top': 386,
+                    'bottom': 374
+                }
+            },
+            'nose': {
+                'tip': 1,
+                'bridge_top': 168,
+                'bridge_bottom': 6,
+                'left_nostril': 205,
+                'right_nostril': 425,
+                'base': 19
+            }
+        }
+
+    def get_landmark_coords(self, landmark, image_shape):
+        """Convert landmark to pixel coordinates"""
+        return (
+            int(landmark.x * image_shape[1]),
+            int(landmark.y * image_shape[0])
+        )
+
+    def analyze_face(self, image):
+        """Analyze all facial features and their relationships"""
+        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        results = self.face_mesh.process(image_rgb)
+        
+        if not results.multi_face_landmarks:
+            return None
+            
+        landmarks = results.multi_face_landmarks[0].landmark
+        face_data = self.extract_facial_measurements(landmarks, image.shape)
+        analysis = self.analyze_proportions(face_data)
+        
+        return face_data, analysis
+
+    def extract_facial_measurements(self, landmarks, image_shape):
+        """Extract measurements for all facial features"""
+        measurements = {
+            'face': {},
+            'eyes': {},
+            'nose': {},
+            'relationships': {}
+        }
+        
+        # Face measurements
+        face_top = self.get_landmark_coords(landmarks[self.landmarks['face']['top']], image_shape)
+        face_bottom = self.get_landmark_coords(landmarks[self.landmarks['face']['bottom']], image_shape)
+        face_left = self.get_landmark_coords(landmarks[self.landmarks['face']['left']], image_shape)
+        face_right = self.get_landmark_coords(landmarks[self.landmarks['face']['right']], image_shape)
+        
+        measurements['face']['height'] = sqrt(
+            (face_top[0] - face_bottom[0])**2 + 
+            (face_top[1] - face_bottom[1])**2
+        )
+        measurements['face']['width'] = sqrt(
+            (face_left[0] - face_right[0])**2 + 
+            (face_left[1] - face_right[1])**2
+        )
+        
+        # Eyes measurements
+        left_eye = {
+            'outer': self.get_landmark_coords(landmarks[self.landmarks['eyes']['left']['outer']], image_shape),
+            'inner': self.get_landmark_coords(landmarks[self.landmarks['eyes']['left']['inner']], image_shape),
+            'top': self.get_landmark_coords(landmarks[self.landmarks['eyes']['left']['top']], image_shape),
+            'bottom': self.get_landmark_coords(landmarks[self.landmarks['eyes']['left']['bottom']], image_shape)
+        }
+        
+        right_eye = {
+            'outer': self.get_landmark_coords(landmarks[self.landmarks['eyes']['right']['outer']], image_shape),
+            'inner': self.get_landmark_coords(landmarks[self.landmarks['eyes']['right']['inner']], image_shape),
+            'top': self.get_landmark_coords(landmarks[self.landmarks['eyes']['right']['top']], image_shape),
+            'bottom': self.get_landmark_coords(landmarks[self.landmarks['eyes']['right']['bottom']], image_shape)
+        }
+        
+        measurements['eyes']['left_width'] = sqrt(
+            (left_eye['outer'][0] - left_eye['inner'][0])**2 + 
+            (left_eye['outer'][1] - left_eye['inner'][1])**2
+        )
+        measurements['eyes']['right_width'] = sqrt(
+            (right_eye['outer'][0] - right_eye['inner'][0])**2 + 
+            (right_eye['outer'][1] - right_eye['inner'][1])**2
+        )
+        measurements['eyes']['interpupillary_distance'] = sqrt(
+            (left_eye['inner'][0] - right_eye['inner'][0])**2 + 
+            (left_eye['inner'][1] - right_eye['inner'][1])**2
+        )
+        
+        # Nose measurements
+        nose_tip = self.get_landmark_coords(landmarks[self.landmarks['nose']['tip']], image_shape)
+        nose_bridge_top = self.get_landmark_coords(landmarks[self.landmarks['nose']['bridge_top']], image_shape)
+        nose_base = self.get_landmark_coords(landmarks[self.landmarks['nose']['base']], image_shape)
+        left_nostril = self.get_landmark_coords(landmarks[self.landmarks['nose']['left_nostril']], image_shape)
+        right_nostril = self.get_landmark_coords(landmarks[self.landmarks['nose']['right_nostril']], image_shape)
+        
+        measurements['nose']['length'] = sqrt(
+            (nose_bridge_top[0] - nose_base[0])**2 + 
+            (nose_bridge_top[1] - nose_base[1])**2
+        )
+        measurements['nose']['width'] = sqrt(
+            (left_nostril[0] - right_nostril[0])**2 + 
+            (left_nostril[1] - right_nostril[1])**2
+        )
+        measurements['nose']['projection'] = sqrt(
+            (nose_tip[0] - nose_base[0])**2 + 
+            (nose_tip[1] - nose_base[1])**2
+        )
+        
+        # Feature relationships
+        measurements['relationships']['eye_to_nose_ratio'] = (
+            measurements['eyes']['interpupillary_distance'] / measurements['nose']['width']
+        )
+        measurements['relationships']['nose_to_face_ratio'] = (
+            measurements['nose']['length'] / measurements['face']['height']
+        )
+        measurements['relationships']['eye_spacing_to_face_ratio'] = (
+            measurements['eyes']['interpupillary_distance'] / measurements['face']['width']
+        )
+        
+        # Store coordinates for visualization
+        measurements['coordinates'] = {
+            'face': {'top': face_top, 'bottom': face_bottom, 'left': face_left, 'right': face_right},
+            'eyes': {'left': left_eye, 'right': right_eye},
+            'nose': {
+                'tip': nose_tip,
+                'bridge_top': nose_bridge_top,
+                'base': nose_base,
+                'left_nostril': left_nostril,
+                'right_nostril': right_nostril
+            }
+        }
+        
+        return measurements
+
+    def analyze_proportions(self, measurements):
+        """Analyze facial proportions and calculate harmony scores"""
+        analysis = {
+            'feature_scores': {},
+            'relationship_scores': {},
+            'overall_harmony': 0.0
+        }
+        
+        # Ideal proportions based on classical aesthetics
+        ideals = {
+            'eye_to_nose_ratio': 1.618,  # Golden ratio
+            'nose_to_face_ratio': 0.333,  # One third of face height
+            'eye_spacing_to_face_ratio': 0.46  # Classical proportion
+        }
+        
+        # Score individual features
+        analysis['feature_scores']['eyes_symmetry'] = 1 - abs(
+            measurements['eyes']['left_width'] - measurements['eyes']['right_width']
+        ) / max(measurements['eyes']['left_width'], measurements['eyes']['right_width'])
+        
+        analysis['feature_scores']['nose_proportion'] = 1 - abs(
+            measurements['nose']['width'] / measurements['nose']['length'] - 0.667
+        )
+        
+        # Score relationships between features
+        for relationship, ideal in ideals.items():
+            actual = measurements['relationships'][relationship]
+            analysis['relationship_scores'][relationship] = 1 - min(
+                abs(actual - ideal) / ideal, 1.0
+            )
+        
+        # Calculate overall harmony
+        feature_harmony = sum(analysis['feature_scores'].values()) / len(analysis['feature_scores'])
+        relationship_harmony = sum(analysis['relationship_scores'].values()) / len(analysis['relationship_scores'])
+        analysis['overall_harmony'] = (feature_harmony + relationship_harmony) / 2
+        
+        return analysis
+
+    def draw_analysis(self, image, measurements, analysis):
+        """Draw facial analysis visualization"""
+        output = image.copy()
+        coords = measurements['coordinates']
+        
+        # Draw face outline
+        cv2.polylines(output, [np.array([
+            coords['face']['top'],
+            coords['face']['right'],
+            coords['face']['bottom'],
+            coords['face']['left']
+        ], dtype=np.int32)], True, (255, 255, 0), 2)
+        
+        # Draw eyes
+        for eye in ['left', 'right']:
+            cv2.polylines(output, [np.array([
+                coords['eyes'][eye]['outer'],
+                coords['eyes'][eye]['top'],
+                coords['eyes'][eye]['inner'],
+                coords['eyes'][eye]['bottom']
+            ], dtype=np.int32)], True, (0, 255, 0), 2)
+            
+        # Draw nose
+        cv2.line(output, coords['nose']['bridge_top'], coords['nose']['base'], (255, 0, 0), 2)
+        cv2.line(output, coords['nose']['left_nostril'], coords['nose']['right_nostril'], (255, 0, 0), 2)
+        
+        # Add measurements and scores
+        y_offset = 30
+        cv2.putText(output, f"Overall Harmony: {analysis['overall_harmony']:.2f}", 
+                   (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        
+        y_offset += 25
+        cv2.putText(output, f"Eye Symmetry: {analysis['feature_scores']['eyes_symmetry']:.2f}", 
+                   (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+        
+        y_offset += 25
+        cv2.putText(output, f"Nose Proportion: {analysis['feature_scores']['nose_proportion']:.2f}", 
+                   (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+        
+        return output
+
+def main():
+    analyzer = FacialFeatureAnalyzer()
+    cap = cv2.VideoCapture(0)
+    
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        
+        result = analyzer.analyze_face(frame)
+        if result:
+            measurements, analysis = result
+            output_frame = analyzer.draw_analysis(frame, measurements, analysis)
+            cv2.imshow('Facial Analysis', output_frame)
+        
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+    
+    cap.release()
+    cv2.destroyAllWindows()
+
+if __name__ == "__main__":
+    main()
